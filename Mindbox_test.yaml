@@ -1,0 +1,84 @@
+# Deployment: Определяет, как будет развернуто приложение в Kubernetes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mindboxtest-deployment # Название Deployment для идентификации
+  labels:
+    app: mindboxtest # Метка, которая будет использоваться для подов
+spec:
+  replicas: 1 # Минимальное количество подов (1 под ночью для экономии ресурсов)
+  selector:
+    matchLabels:
+      app: mindboxtest # Связь между подами и этим Deployment
+  template: # Шаблон для создания подов
+    metadata:
+      labels:
+        app: mindboxtest # Метка для подов, чтобы они могли быть найдены сервисами
+    spec:
+      containers:
+      - name: mindboxtest-container # Имя контейнера, внутри пода
+        image: my-web-app:latest # Docker-образ приложения (замените на актуальный образ)
+        resources: # Определение запросов и лимитов на ресурсы
+          requests:
+            memory: "128Mi" # Минимальная память, необходимая приложению
+            cpu: "100m" # Минимальная CPU нагрузка в обычном состоянии
+          limits:
+            memory: "128Mi" # Максимальная память, доступная приложению
+            cpu: "1000m" # Максимальная CPU нагрузка (учитывает потребности при инициализации)
+        readinessProbe: # Проверка готовности приложения принимать трафик
+          httpGet:
+            path: /health # URL для проверки готовности
+            port: 8080 # Порт, на котором работает приложение
+          initialDelaySeconds: 5 # Задержка перед первой проверкой (время инициализации)
+          periodSeconds: 10 # Частота проверок
+        livenessProbe: # Проверка, что приложение продолжает работать
+          httpGet:
+            path: /health # URL для проверки
+            port: 8080 # Порт проверки
+          initialDelaySeconds: 10 # Задержка перед проверкой
+          periodSeconds: 30 # Частота проверок
+      affinity: # Правила распределения подов по нодам
+        podAntiAffinity: # Антиаффинность: предотвращает запуск подов на одной ноде
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - mindboxtest # Указывает, что поды с этой меткой не должны быть на одной ноде
+            topologyKey: kubernetes.io/hostname # Гарантирует, что поды будут на разных нодах
+      tolerations:
+      - key: "node-role.kubernetes.io"
+        operator: "Exists"
+        effect: "NoSchedule" # Разрешает размещение на рабочих нодах
+---
+# Horizontal Pod Autoscaler (HPA): Автоматически изменяет количество подов в зависимости от загрузки.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mindboxtest-hpa # Название HPA
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1 # Привязка к Deployment
+    kind: Deployment
+    name: mindboxtest-deployment # Название Deployment для масштабирования
+  minReplicas: 1 # Минимум 1 под ночью
+  maxReplicas: 4 # Максимум 4 пода в пиковой нагрузке
+  metrics:
+  - type: Resource # Тип метрики для мониторинга
+    resource:
+      name: cpu # Используем загрузку CPU для триггера масштабирования
+      target:
+        type: Utilization
+        averageUtilization: 50 # Масштабирование при загрузке CPU выше 50%
+---
+# Pod Disruption Budget (PDB): Гарантирует, что минимальное количество подов всегда будет доступно.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mindboxtest-pdb # Название PDB
+spec:
+  minAvailable: 1 # Минимум 1 под всегда должен быть доступен
+  selector:
+    matchLabels:
+      app: mindboxtest # Указывает, что PDB относится к подам с этой меткой
